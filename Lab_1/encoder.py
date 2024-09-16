@@ -42,7 +42,7 @@ def encrypt_bits(
 
 
 def encryption_function(
-    bits_block_1: bitarray, bits_block_2: bitarray, key: List[bitarray]
+    bits_block_1: bitarray, bits_block_2: bitarray, key_bits: List[bitarray]
 ) -> List[bitarray]:
     for i in range(0, 32):
         pass

@@ -2,7 +2,6 @@ import logging
 from typing import List
 
 
-# Настройка логирования
 logging.basicConfig(
     filename="encryption.log",
     level=logging.INFO,

@@ -463,7 +463,7 @@ def main() -> None:
     try:
         with open("input.txt", "r") as file:
             data = file.read()
-        key = int.from_bytes("qwertyqwertyqweerty".encode(), "big")
+        key = int.from_bytes("hellomynameisjordanbelford".encode(), "big")
         s = STB(key)
         encrypted_text = s.encrypt(data)
 

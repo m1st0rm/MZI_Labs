@@ -2,7 +2,7 @@ import sys
 from typing import List
 
 
-TABLE: List[List[int]] = [
+S_BOX: List[List[int]] = [
     [
         0xB1,
         0x94,
@@ -295,30 +295,34 @@ TABLE: List[List[int]] = [
 
 
 class STB:
-    def __init__(self, key: int) -> None:
-        count = self.get_key_chunks_counts(key)
-        self.tmp_keys: List[int] = []
+    def __init__(self, secret_key: int) -> None:
+        key_count = self.calculate_key_chunks(secret_key)
+        self.temporary_keys: List[int] = []
 
-        for i in range(count):
-            self.tmp_keys.append(key & 0xFFFF)
-            key >>= 32
+        for i in range(key_count):
+            self.temporary_keys.append(secret_key & 0xFFFF)
+            secret_key >>= 32
 
-        if count == 4:
-            self.tmp_keys.extend(self.tmp_keys[:])
-        elif count == 6:
-            self.tmp_keys.extend(
+        if key_count == 4:
+            self.temporary_keys.extend(self.temporary_keys[:])
+        elif key_count == 6:
+            self.temporary_keys.extend(
                 [
-                    self.tmp_keys[0] ^ self.tmp_keys[1] ^ self.tmp_keys[2],
-                    self.tmp_keys[3] ^ self.tmp_keys[4] ^ self.tmp_keys[5],
+                    self.temporary_keys[0]
+                    ^ self.temporary_keys[1]
+                    ^ self.temporary_keys[2],
+                    self.temporary_keys[3]
+                    ^ self.temporary_keys[4]
+                    ^ self.temporary_keys[5],
                 ]
             )
 
-        self.K: List[int] = []
+        self.key_schedule: List[int] = []
         for _ in range(8):
-            self.K.extend(self.tmp_keys[:])
+            self.key_schedule.extend(self.temporary_keys[:])
 
-    def get_key_chunks_counts(self, key: int) -> int:
-        length = key.bit_length()
+    def calculate_key_chunks(self, secret_key: int) -> int:
+        length = secret_key.bit_length()
         if 256 >= length > 192:
             return 8
         elif 192 >= length > 128:
@@ -326,153 +330,163 @@ class STB:
         else:
             return 4
 
-    def rot_hi(self, u: int) -> int:
-        if u < 1 << 31:
-            return (2 * u) % (1 << 32)
+    def rotate_high(self, value: int) -> int:
+        if value < 1 << 31:
+            return (2 * value) % (1 << 32)
         else:
-            return (2 * u + 1) % (1 << 32)
+            return (2 * value + 1) % (1 << 32)
 
-    def rot_hi_r(self, u: int, r: int) -> int:
-        result = u
-        for _ in range(r):
-            result = self.rot_hi(result)
+    def rotate_high_multiple(self, value: int, rotations: int) -> int:
+        result = value
+        for _ in range(rotations):
+            result = self.rotate_high(result)
         return result
 
-    def square_plus(self, u: int, v: int) -> int:
-        return (u + v) % (1 << 32)
+    def add_modulo(self, first: int, second: int) -> int:
+        return (first + second) % (1 << 32)
 
-    def square_minus(self, u: int, v: int) -> int:
-        return (u - v) % (1 << 32)
+    def subtract_modulo(self, first: int, second: int) -> int:
+        return (first - second) % (1 << 32)
 
-    def G(self, r: int, word: int) -> int:
+    def function_G(self, round_num: int, input_word: int) -> int:
         mask = (1 << 8) - 1
-        final = 0
+        output = 0
         for i in range(4):
-            part = word & mask
-            word >>= 8
-            right = part & 0x0F
-            left = (part & 0xF0) >> 4
-            result = TABLE[left][right]
-            result <<= 8 * i
-            final += result
-        return self.rot_hi_r(final, r)
+            part = input_word & mask
+            input_word >>= 8
+            right_half = part & 0x0F
+            left_half = (part & 0xF0) >> 4
+            s_box_value = S_BOX[left_half][right_half]
+            s_box_value <<= 8 * i
+            output += s_box_value
+        return self.rotate_high_multiple(output, round_num)
 
-    def encrypt_block(self, X: int) -> int:
-        if self.get_key_chunks_counts(X) != 4:
+    def encrypt_data_block(self, data_block: int) -> int:
+        if self.calculate_key_chunks(data_block) != 4:
             raise ValueError()
-        d = X & 0xFFFFFFFF
-        X >>= 32
-        c = X & 0xFFFFFFFF
-        X >>= 32
-        b = X & 0xFFFFFFFF
-        X >>= 32
-        a = X
+        d = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        c = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        b = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        a = data_block
 
         for i in range(1, 9):
-            b = b ^ self.G(5, self.square_plus(a, self.K[7 * i - 7]))
-            c = c ^ self.G(21, self.square_plus(d, self.K[7 * i - 6]))
-            a = self.square_minus(a, self.G(13, self.square_plus(b, self.K[7 * i - 5])))
-            e = self.G(
-                21, self.square_plus(self.square_plus(b, c), self.K[7 * i - 4])
+            b = b ^ self.function_G(5, self.add_modulo(a, self.key_schedule[7 * i - 7]))
+            c = c ^ self.function_G(21, self.add_modulo(d, self.key_schedule[7 * i - 6]))
+            a = self.subtract_modulo(
+                a, self.function_G(13, self.add_modulo(b, self.key_schedule[7 * i - 5]))
+            )
+            temp = self.function_G(
+                21, self.add_modulo(self.add_modulo(b, c), self.key_schedule[7 * i - 4])
             ) ^ (i % (2**32))
-            b = self.square_plus(b, e)
-            c = self.square_minus(c, e)
-            d = self.square_plus(d, self.G(13, self.square_plus(c, self.K[7 * i - 3])))
-            b = b ^ self.G(21, self.square_plus(a, self.K[7 * i - 2]))
-            c = c ^ self.G(5, self.square_plus(d, self.K[7 * i - 1]))
+            b = self.add_modulo(b, temp)
+            c = self.subtract_modulo(c, temp)
+            d = self.add_modulo(
+                d, self.function_G(13, self.add_modulo(c, self.key_schedule[7 * i - 3]))
+            )
+            b = b ^ self.function_G(21, self.add_modulo(a, self.key_schedule[7 * i - 2]))
+            c = c ^ self.function_G(5, self.add_modulo(d, self.key_schedule[7 * i - 1]))
             a, b = b, a
             c, d = d, c
             b, c = c, b
 
         return (b << 96) + (d << 64) + (a << 32) + c
 
-    def decrypt_block(self, X: int) -> int:
-        if self.get_key_chunks_counts(X) != 4:
+    def decrypt_data_block(self, data_block: int) -> int:
+        if self.calculate_key_chunks(data_block) != 4:
             raise ValueError()
-        d = X & 0xFFFFFFFF
-        X >>= 32
-        c = X & 0xFFFFFFFF
-        X >>= 32
-        b = X & 0xFFFFFFFF
-        X >>= 32
-        a = X
+        d = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        c = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        b = data_block & 0xFFFFFFFF
+        data_block >>= 32
+        a = data_block
 
         for i in range(8, 0, -1):
-            b = b ^ self.G(5, self.square_plus(a, self.K[7 * i - 1]))
-            c = c ^ self.G(21, self.square_plus(d, self.K[7 * i - 2]))
-            a = self.square_minus(a, self.G(13, self.square_plus(b, self.K[7 * i - 3])))
-            e = self.G(
-                21, self.square_plus(self.square_plus(b, c), self.K[7 * i - 4])
+            b = b ^ self.function_G(5, self.add_modulo(a, self.key_schedule[7 * i - 1]))
+            c = c ^ self.function_G(21, self.add_modulo(d, self.key_schedule[7 * i - 2]))
+            a = self.subtract_modulo(
+                a, self.function_G(13, self.add_modulo(b, self.key_schedule[7 * i - 3]))
+            )
+            temp = self.function_G(
+                21, self.add_modulo(self.add_modulo(b, c), self.key_schedule[7 * i - 4])
             ) ^ (i % (2**32))
-            b = self.square_plus(b, e)
-            c = self.square_minus(c, e)
-            d = self.square_plus(d, self.G(13, self.square_plus(c, self.K[7 * i - 5])))
-            b = b ^ self.G(21, self.square_plus(a, self.K[7 * i - 6]))
-            c = c ^ self.G(5, self.square_plus(d, self.K[7 * i - 7]))
+            b = self.add_modulo(b, temp)
+            c = self.subtract_modulo(c, temp)
+            d = self.add_modulo(
+                d, self.function_G(13, self.add_modulo(c, self.key_schedule[7 * i - 5]))
+            )
+            b = b ^ self.function_G(21, self.add_modulo(a, self.key_schedule[7 * i - 6]))
+            c = c ^ self.function_G(5, self.add_modulo(d, self.key_schedule[7 * i - 7]))
             a, b = b, a
             c, d = d, c
             a, d = d, a
 
         return (c << 96) + (a << 64) + (d << 32) + b
 
-    def split_message(self, message: int) -> List[int]:
-        chunks: List[int] = []
+    def split_into_chunks(self, message: int) -> List[int]:
+        result_chunks: List[int] = []
         while message:
             chunk = message & 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
-            chunks.append(chunk)
+            result_chunks.append(chunk)
             message >>= 128
-        return chunks
+        return result_chunks
 
-    def join_message(self, chunks: List[int]) -> int:
-        answer = 0
+    def combine_chunks(self, chunks: List[int]) -> int:
+        combined = 0
         for chunk in chunks:
-            answer <<= 128
-            answer += chunk
-        return answer
+            combined <<= 128
+            combined += chunk
+        return combined
 
-    def encrypt(self, message: str) -> bytes:
-        plain_msg = int.from_bytes(message.encode(), "big")
-        chunks = self.split_message(plain_msg)
-        results = self.encrypt_block_plain(chunks)
-        answer = self.join_message(results)
-        return answer.to_bytes((answer.bit_length() + 7) // 8, "big")
+    def encrypt_message(self, message: str) -> bytes:
+        plaintext = int.from_bytes(message.encode(), "big")
+        chunks = self.split_into_chunks(plaintext)
+        encrypted_chunks = self.encrypt_block_list(chunks)
+        combined_result = self.combine_chunks(encrypted_chunks)
+        return combined_result.to_bytes((combined_result.bit_length() + 7) // 8, "big")
 
-    def decrypt(self, message: bytes) -> str:
-        plain_msg = int.from_bytes(message, "big")
-        chunks = reversed(self.split_message(plain_msg))
-        results = self.decrypt_block_plain(chunks)
-        answer = self.join_message(reversed(results))
-        return answer.to_bytes((answer.bit_length() + 7) // 8, "big").decode()
+    def decrypt_message(self, encrypted_data: bytes) -> str:
+        plaintext = int.from_bytes(encrypted_data, "big")
+        chunks = reversed(self.split_into_chunks(plaintext))
+        decrypted_chunks = self.decrypt_block_list(chunks)
+        combined_result = self.combine_chunks(reversed(decrypted_chunks))
+        return combined_result.to_bytes(
+            (combined_result.bit_length() + 7) // 8, "big"
+        ).decode()
 
-    def encrypt_block_plain(self, chunks: List[int]) -> List[int]:
-        results: List[int] = []
-        for X in chunks:
-            Y = self.encrypt_block(X)
-            results.append(Y)
-        return results
+    def encrypt_block_list(self, chunks: List[int]) -> List[int]:
+        encrypted_results: List[int] = []
+        for block in chunks:
+            encrypted_result = self.encrypt_data_block(block)
+            encrypted_results.append(encrypted_result)
+        return encrypted_results
 
-    def decrypt_block_plain(self, chunks: List[int]) -> List[int]:
-        results: List[int] = []
-        for X in chunks:
-            Y = self.decrypt_block(X)
-            results.append(Y)
-        return results
+    def decrypt_block_list(self, chunks: List[int]) -> List[int]:
+        decrypted_results: List[int] = []
+        for block in chunks:
+            decrypted_result = self.decrypt_data_block(block)
+            decrypted_results.append(decrypted_result)
+        return decrypted_results
 
 
 def main() -> None:
     try:
         with open("input.txt", "r") as file:
-            data = file.read()
-        key = int.from_bytes("hellomynameisjordanbelford".encode(), "big")
-        s = STB(key)
-        encrypted_text = s.encrypt(data)
+            input_data = file.read()
+        secret_key = int.from_bytes("hellomynameisjordanbelford".encode(), "big")
+        stb_instance = STB(secret_key)
+        encrypted_text = stb_instance.encrypt_message(input_data)
 
         with open("encrypted.txt", "wb") as file:
             file.write(encrypted_text)
 
         with open("encrypted.txt", "rb") as file:
             encrypted_data = file.read()
-        decrypted_text = s.decrypt(encrypted_data)
+        decrypted_text = stb_instance.decrypt_message(encrypted_data)
 
         with open("decrypted.txt", "w") as file:
             file.write(decrypted_text)

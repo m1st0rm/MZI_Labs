@@ -1,6 +1,7 @@
+import os
+import sys
 from typing import List
 
-import gmpy2
 from sympy import isprime
 
 
@@ -29,11 +30,11 @@ class RabinCryptoSystem:
         if key <= msg:
             if mode == "e":
                 raise Exception(
-                    "Public key must be greater than message in integer representation."
+                    "Error: Public key must be greater than message in integer representation."
                 )
             else:
                 raise Exception(
-                    "Product of private keys must be greater than decrypted message in integer representation."
+                    "Error: Product of private keys must be greater than decrypted message in integer representation."
                 )
 
     @staticmethod
@@ -43,7 +44,7 @@ class RabinCryptoSystem:
         )
         if not critetia:
             raise Exception(
-                "One or more private keys do not meet the private key criteria."
+                "Error: One or more private keys do not meet the private key criteria."
             )
 
     @staticmethod
@@ -92,11 +93,12 @@ class RabinCryptoSystem:
 
         self.write_bytes(encrypted_message_byte_representation, mode="e")
 
+        print("Success: Encrypted message stored in ecnrypted.txt.")
+
     def decrypt_message(self, file_path: str, private_key: List[int]) -> None:
         self.read_bytes(file_path, mode="d")
 
         message_integer = int.from_bytes(self.encrypted_bytes, byteorder="big")
-        message_integer = gmpy2.mpz(message_integer)
 
         try:
             self.key_criteria_checker(private_key)
@@ -104,31 +106,24 @@ class RabinCryptoSystem:
             print(e)
             return
 
-        private_key_mpz = [gmpy2.mpz(private_key[0]), gmpy2.mpz(private_key[1])]
-
-        message_square_root_modulo_p = int(
-            gmpy2.powmod(
-                message_integer, (private_key_mpz[0] + 1) // 4, private_key_mpz[0]
-            )
+        message_square_root_modulo_p = pow(
+            message_integer, ((private_key[0] + 1) // 4), private_key[0]
         )
-        message_square_root_modulo_q = int(
-            gmpy2.powmod(
-                message_integer, (private_key_mpz[1] + 1) // 4, private_key_mpz[1]
-            )
+        message_square_root_modulo_q = pow(
+            message_integer, ((private_key[1] + 1) // 4), private_key[1]
         )
 
         bezu_ratio_coefficients = self.extended_gcd(private_key[0], private_key[1])
-
         public_key = private_key[0] * private_key[1]
 
         candidate_1 = (
-            (bezu_ratio_coefficients[0] * private_key[0] * message_square_root_modulo_p)
-            + (bezu_ratio_coefficients[1] * private_key[1] * message_square_root_modulo_q)
+            (bezu_ratio_coefficients[0] * private_key[0] * message_square_root_modulo_q)
+            + (bezu_ratio_coefficients[1] * private_key[1] * message_square_root_modulo_p)
         ) % public_key
         candidate_2 = public_key - candidate_1
         candidate_3 = (
-            (bezu_ratio_coefficients[0] * private_key[0] * message_square_root_modulo_p)
-            - (bezu_ratio_coefficients[1] * private_key[1] * message_square_root_modulo_q)
+            (bezu_ratio_coefficients[0] * private_key[0] * message_square_root_modulo_q)
+            - (bezu_ratio_coefficients[1] * private_key[1] * message_square_root_modulo_p)
         ) % public_key
         candidate_4 = public_key - candidate_3
 
@@ -136,16 +131,55 @@ class RabinCryptoSystem:
         filtered_candidates = [n for n in candidates if self.check_first_byte(n)]
 
         if not filtered_candidates:
-            print("Decryption failed")
+            print("Error: Unable to decrypt message with specified private keys.")
             return
 
         self.write_bytes(self.remove_first_byte(filtered_candidates[0]), mode="d")
 
+        print("Success: Decrypted message stored in decrypted.txt.")
+
 
 def main():
-    rcs = RabinCryptoSystem()
-    rcs.encrypt_message("input.txt", 1199122247701128438487154950952336903201)
-    rcs.decrypt_message("encrypted.txt", [13000195692539095939, 92238784404554245259])
+    if len(sys.argv) < 4:
+        print("Usage: python script.py <mode> <file_path> <key(s)>")
+        return
+
+    mode = sys.argv[1].lower()
+    file_path = sys.argv[2]
+
+    if not os.path.isfile(file_path) or not file_path.endswith(".txt"):
+        print("Error: The file must exist and be a .txt file.")
+        return
+
+    rabin_system = RabinCryptoSystem()
+
+    if mode == "e":
+        if len(sys.argv) != 4:
+            print("Error: Encryption mode requires exactly one key.")
+            return
+        try:
+            public_key = int(sys.argv[3])
+        except ValueError:
+            print("Error: The public key must be an integer.")
+            return
+
+        rabin_system.encrypt_message(file_path, public_key)
+
+    elif mode == "d":
+        if len(sys.argv) != 5:
+            print("Error: Decryption mode requires exactly two keys.")
+            return
+        try:
+            private_keys = [int(sys.argv[3]), int(sys.argv[4])]
+        except ValueError:
+            print("Error: Both private keys must be integers.")
+            return
+
+        rabin_system.decrypt_message(file_path, private_keys)
+
+    else:
+        print("Error: Invalid mode. Use 'e' for encryption or 'd' for decryption.")
 
 
-main()
+if __name__ == "__main__":
+    main()

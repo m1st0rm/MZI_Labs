@@ -1,4 +1,4 @@
 [flake8]
 exclude = .git,.venv,__init.py__,.db-queries
 max-line-length = 90
-ignore = E501, E203, W503, E741, F841, E743, E722
+ignore = E501, E203, W503, E741, F841, E743, E722, F403, F405
